@@ -2216,6 +2216,30 @@ class GraphModule(torch.nn.Module):
 """,
             )
 
+    def test_tensor_subclass_input(self):
+        """Regression test: a traceable wrapper tensor subclass (e.g. the
+        torchao quantized-parameter subclasses) must flow through
+        invoke_subgraph subgraph speculation without tripping the
+        _collect_fake_inputs FakeTensor assertion. Dynamo fakifies the
+        subclass by fakifying its inner tensors; the outer subclass object
+        is not itself a FakeTensor, so the check must look through it via
+        torch._subclasses.fake_tensor.is_fake."""
+        from torch.testing._internal.two_tensor import TwoTensor
+
+        @nested_compile_region
+        def gn(x, y):
+            return torch.mul(x, y) + x
+
+        def fn(x, y):
+            return gn(x, y) + gn(x + 1.0, y)
+
+        x = TwoTensor(torch.randn(8, 8), torch.randn(8, 8))
+        y = TwoTensor(torch.randn(8, 8), torch.randn(8, 8))
+
+        ref = fn(x, y)
+        res = torch.compile(fn, backend="aot_eager", fullgraph=True)(x, y)
+        self.assertEqual(ref, res)
+
     def test_return_size(self):
         def run(dynamic):
             torch.compiler.reset()
